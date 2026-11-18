@@ -393,7 +393,14 @@ function summaryView(): string {
 
 async function loadSummary() {
   summaryError = false;
-  try { summary = await api.summary(30); } catch { summaryError = true; }
+  // The database pauses when idle; its first answer after waking can be an error. Retry quietly.
+  for (let attempt = 1; attempt <= 4 && !summary; attempt++) {
+    try { summary = await api.summary(30); }
+    catch (e) {
+      if (!(e instanceof ApiError && e.retryable) || attempt === 4) { summaryError = true; break; }
+      await new Promise((r) => setTimeout(r, attempt * 4000));
+    }
+  }
   if (route() === 'summary') render();
 }
 

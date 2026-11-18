@@ -52,7 +52,14 @@ async function load() {
   const status = document.getElementById('status')!;
   status.textContent = 'Loading… the first load can take up to a minute while the database wakes up.';
   try {
-    const res = await fetch(`/api/manage/reports?days=${days}`);
+    // The database pauses when idle; its first answer after waking can be an error. Retry quietly.
+    let res: Response | null = null;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try { res = await fetch(`/api/manage/reports?days=${days}`); } catch { res = null; }
+      if (res && (res.ok || res.status < 500)) break;
+      if (attempt < 4) await new Promise((r) => setTimeout(r, attempt * 4000));
+    }
+    if (!res) throw new Error('no connection');
     if (!res.ok) throw new Error(String(res.status));
     reports = (await res.json()).reports;
     status.textContent = '';
