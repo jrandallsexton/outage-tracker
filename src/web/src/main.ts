@@ -221,9 +221,9 @@ function summaryView(): string {
   <main>
     <h2 class="page-title">Entrada internet outages · last ${s.days} days</h2>
     <div class="stats">
-      <div><strong>${s.totals.outages}</strong><span>outages reported</span></div>
-      <div><strong>${s.totals.reportedDowntimeHours}</strong><span>hours down (reported)</span></div>
-      <div><strong>${s.totals.largestOutageHomes}</strong><span>homes in the largest outage</span></div>
+      <div><strong>${s.totals.outages}</strong><span>${s.totals.outages === 1 ? 'outage' : 'outages'} reported</span></div>
+      <div><strong>${s.totals.reportedDowntimeHours}</strong><span>${s.totals.reportedDowntimeHours === 1 ? 'hour' : 'hours'} down (reported)</span></div>
+      <div><strong>${s.totals.largestOutageHomes}</strong><span>${s.totals.largestOutageHomes === 1 ? 'home' : 'homes'} in the largest outage</span></div>
     </div>
     ${s.events.length === 0 ? '<p class="center muted">No outages reported in this period.</p>' : [...byDay].map(([, evs]) => `
       <section class="card day"><h3>${fmtDay(evs[0].start)}</h3><ul class="events">
