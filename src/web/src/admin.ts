@@ -52,7 +52,7 @@ async function load() {
   const status = document.getElementById('status')!;
   status.textContent = 'Loading… the first load can take up to a minute while the database wakes up.';
   try {
-    const res = await fetch(`/api/admin/reports?days=${days}`);
+    const res = await fetch(`/api/manage/reports?days=${days}`);
     if (!res.ok) throw new Error(String(res.status));
     reports = (await res.json()).reports;
     status.textContent = '';

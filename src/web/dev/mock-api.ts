@@ -100,7 +100,7 @@ export function mockApi(): Plugin {
             events: events.reverse(),
           });
         }
-        if (path === '/api/admin/reports') {
+        if (path === '/api/manage/reports') {
           return send(res, 200, { days: 30, reports: [...reports.values()].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).map((r) => ({
             ...r, isListedAddress: !!r.addressId,
             photos: [...photos.values()].filter((p) => p.reportId === r.id).map((p) => ({ id: p.id, kind: p.kind, url: `/mock-blob/${p.id}.jpg` })),

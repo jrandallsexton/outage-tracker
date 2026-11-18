@@ -3,7 +3,7 @@
     "apiRuntime": "dotnet-isolated:10.0"
   },
   "routes": [
-    { "route": "/api/admin/*", "allowedRoles": ["admin"] },
+    { "route": "/api/manage/*", "allowedRoles": ["admin"] },
     { "route": "/sw.js", "headers": { "cache-control": "no-cache" } },
     { "route": "/assets/*", "headers": { "cache-control": "public, max-age=31536000, immutable" } }
   ],

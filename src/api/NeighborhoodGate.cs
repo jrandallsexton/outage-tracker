@@ -28,7 +28,8 @@ public sealed class NeighborhoodGate(IConfiguration config)
 
     /// <summary>
     /// Static Web Apps passes the signed-in user as base64 JSON in x-ms-client-principal.
-    /// staticwebapp.config.json already limits /api/admin/* to the admin role; this is a second check.
+    /// staticwebapp.config.json already limits /api/manage/* to the admin role; this is a second check.
+    /// (Not /api/admin/*: Azure Functions reserves routes starting with "admin" and answers them with 404.)
     /// </summary>
     public static bool IsAdmin(HttpRequest req)
     {

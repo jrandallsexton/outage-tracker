@@ -14,7 +14,7 @@ public sealed class AdminFunctions(Db db, PhotoStore photos, TimeProvider clock)
 
     [Function("AdminReports")]
     public async Task<IActionResult> Reports(
-        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "admin/reports")] HttpRequest req)
+        [HttpTrigger(AuthorizationLevel.Anonymous, "get", Route = "manage/reports")] HttpRequest req)
     {
         if (!NeighborhoodGate.IsAdmin(req)) return new UnauthorizedResult();
         var days = int.TryParse(req.Query["days"], out var d) ? Math.Clamp(d, 1, 366) : 60;
