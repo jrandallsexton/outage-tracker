@@ -65,6 +65,22 @@ Then in the Azure portal:
 Expected cost: Static Web Apps Free plan $0; SQL free offer $0 unless the monthly allowance is used up
 (it then bills normally instead of going offline); photo storage a few cents a month.
 
+## Custom domain
+
+The site runs at **https://entradaoutage.online** (DNS at Namecheap; free HTTPS certificate from Static Web Apps):
+
+| Namecheap record | Host | Value |
+|---|---|---|
+| ALIAS | `@` | the Static Web App's `*.azurestaticapps.net` hostname |
+| CNAME | `www` | the Static Web App's `*.azurestaticapps.net` hostname |
+| TXT | `_dnsauth` | validation token from `az staticwebapp hostname show ... --hostname entradaoutage.online` |
+| TXT | `_dnsauth.www` | validation token for `www.entradaoutage.online` |
+
+When adding or changing a domain, also add it to the photo storage account's CORS rules
+(`az storage cors add --services b ...`). Otherwise phones can't upload photos from that address.
+Phones remember the address and code per web address, so residents set up on an old address
+need to set up once more on the new one.
+
 ## Admin settings (Static Web App → Environment variables)
 
 | Setting | Purpose |
