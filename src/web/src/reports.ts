@@ -19,6 +19,8 @@ export interface LocalReport {
   notes: string | null;
   withdrawn: boolean;
   photos: { id: string; kind: PhotoKind }[];
+  /** A past outage reported without a length. It has no end time but is NOT still going. */
+  endUnknown?: boolean;
 }
 
 const KEY = 'entrada.reports';
@@ -36,7 +38,7 @@ export function saveReport(r: LocalReport) {
 }
 
 /** The outage this phone reported that hasn't been marked as back yet. */
-export const openReport = () => listReports().find((r) => !r.endedAt && !r.withdrawn) ?? null;
+export const openReport = () => listReports().find((r) => !r.endedAt && !r.withdrawn && !r.endUnknown) ?? null;
 
 export const toBody = (r: LocalReport, p: Profile): ReportBody => ({
   deviceId: p.deviceId,

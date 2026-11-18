@@ -115,3 +115,11 @@ label.check { display: flex; align-items: center; font-weight: 400; }
   transition: transform .25s ease; box-shadow: 0 6px 20px rgba(0,0,0,.25); z-index: 10;
 }
 #toast.show { transform: translate(-50%, 0); }
+
+/* Photo import */
+.import-cta .big { margin-top: 10px; font-size: 1.15rem; padding: 16px; }
+.draft.excluded { opacity: .55; }
+.draft .thumbs li { width: 96px; }
+.draft .thumbs img { width: 96px; height: 96px; }
+.draft .thumbs select { width: 100%; font-size: .72rem; padding: 4px 2px; margin-top: 4px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.secondary.wide { display: block; width: 100%; padding: 12px; margin: 8px 0; }

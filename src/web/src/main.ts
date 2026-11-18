@@ -5,6 +5,7 @@ import { loadProfile, saveProfile, personalLink, type Home } from './profile';
 import { listReports, saveReport, openReport, toBody, PHOTO_KINDS, MAX_PHOTOS, type LocalReport, type PhotoKind } from './reports';
 import { startOutbox, queueReport, queuePhoto, kick, codeFixed, clearProblems, type OutboxStatus } from './outbox';
 import { compressPhoto } from './photos';
+import { readPhotoMeta, type TimeSource } from './phototime';
 import { esc, fmtTime, fmtDay, fmtWhen, fmtDuration, toLocalInput, fromLocalInput, sameDay } from './format';
 
 // ---------------------------------------------------------------- state
@@ -21,11 +22,20 @@ let summaryError = false;
 let installPrompt: (Event & { prompt(): Promise<void> }) | null = null;
 const thumbs = new Map<string, string>();    // photoId -> object URL, this session only
 
-type Route = 'setup' | 'home' | 'past' | 'summary';
+/** Photo import: one draft per outage found in the picked photos. Lives in memory until saved. */
+interface DraftPhoto { id: string; kind: PhotoKind; blob: Blob; url: string; takenAt: Date | null; source: TimeSource | null }
+interface Draft { key: string; include: boolean; start: string; h: string; m: string; photos: DraftPhoto[]; dropped: number; note: string | null }
+let drafts: Draft[] = [];
+let importing = false;
+const MAX_AGE_DAYS = 365;
+const GROUP_GAP_MS = 45 * 60_000; // same rule the server uses to group neighbors' reports
+
+type Route = 'setup' | 'home' | 'past' | 'import' | 'summary';
 function route(): Route {
   const h = location.hash.slice(1);
   if (h === 'summary') return 'summary';
   if (!profile.code || !profile.home || h === 'setup') return 'setup';
+  if (h === 'import') return 'import';
   return h === 'past' ? 'past' : 'home';
 }
 
@@ -33,7 +43,8 @@ function route(): Route {
 function render() {
   const r = route();
   document.body.dataset.route = r;
-  app.innerHTML = r === 'setup' ? setupView() : r === 'past' ? pastView() : r === 'summary' ? summaryView() : homeView();
+  app.innerHTML = r === 'setup' ? setupView() : r === 'past' ? pastView() : r === 'import' ? importView()
+    : r === 'summary' ? summaryView() : homeView();
   if (r === 'setup') bindSetup();
   if (r === 'summary' && !summary) void loadSummary();
   updateSync();
@@ -123,10 +134,10 @@ function photoBlock(photos: { id: string; kind: PhotoKind; url?: string }[]): st
 
 function reportItem(r: LocalReport): string {
   const start = new Date(r.startedAt);
-  const tag = r.withdrawn ? '<span class="tag">removed</span>' : !r.endedAt ? '<span class="tag down">ongoing</span>' : '';
+  const tag = r.withdrawn ? '<span class="tag">removed</span>' : !r.endedAt && !r.endUnknown ? '<span class="tag down">ongoing</span>' : '';
   const span = r.endedAt
     ? `${fmtTime(start)}–${fmtTime(r.endedAt)}${sameDay(start, new Date(r.endedAt)) ? '' : ` (${fmtDay(r.endedAt)})`} · ${fmtDuration(new Date(r.endedAt).getTime() - start.getTime())}`
-    : fmtTime(start);
+    : `${fmtTime(start)}${r.endUnknown ? ' · length not given' : ''}`;
   return `<li class="${r.withdrawn ? 'withdrawn' : ''}"><strong>${fmtDay(start)}</strong> ${span}
     ${r.photos.length ? ` · ${r.photos.length} photo${r.photos.length > 1 ? 's' : ''}` : ''} ${tag}</li>`;
 }
@@ -188,8 +199,13 @@ function pastView(): string {
   const start = new Date(Date.now() - 3_600_000);
   return `${header(homeChip())}
   <main>
+    <section class="card import-cta">
+      <h2>Have photos or screenshots?</h2>
+      <p class="hint">Pick them all at once. The app reads when each was taken and groups them into outages for you to check.</p>
+      <button class="big primary" data-action="import-pick">📷 Report outages from photos</button>
+    </section>
     <section class="card">
-      <h2>Report an earlier outage</h2>
+      <h2>Or enter an outage by hand</h2>
       <label>When did it go down?
         <input type="datetime-local" id="p-start" value="${toLocalInput(start)}" max="${toLocalInput(new Date())}"></label>
       <label>How long did it last? <span class="muted">(optional)</span></label>
@@ -206,7 +222,146 @@ function pastView(): string {
       <p class="center"><a href="#">Cancel</a></p>
     </section>
   </main>
-  <input type="file" id="file" accept="image/*" multiple hidden>`;
+  <input type="file" id="file" accept="image/*" multiple hidden>
+  <input type="file" id="bulk-file" accept="image/*" multiple hidden>`;
+}
+
+// ---------------------------------------------------------------- photo import
+
+const SOURCE_TEXT: Record<TimeSource, string> = { exif: 'time from photo', xmp: 'time from screenshot', file: 'time from file date (check it)' };
+
+function importView(): string {
+  if (importing) return `${header(homeChip())}<main><p class="center muted">Reading photos…</p></main>`;
+  if (!drafts.length) return `${header(homeChip())}<main><section class="card"><p>No photos picked yet.</p>
+    <button class="big primary" data-action="import-pick">📷 Pick photos</button>
+    <p class="center"><a href="#">Back</a></p></section></main>
+    <input type="file" id="bulk-file" accept="image/*" multiple hidden>`;
+  const included = drafts.filter((d) => d.include).length;
+  return `${header(homeChip())}
+  <main>
+    <h2 class="page-title">${drafts.length === 1 ? 'Found 1 outage' : `Found ${drafts.length} outages`}</h2>
+    <p class="hint">Photos taken within 45 minutes of each other count as one outage. Check the times, add how long it lasted if you know, then save.</p>
+    ${drafts.map(draftCard).join('')}
+    <button class="secondary wide" data-action="import-pick">➕ Add more photos</button>
+    <button class="big primary" data-action="import-save" ${included ? '' : 'disabled'}>Save ${included} outage${included === 1 ? '' : 's'}</button>
+    <p id="import-msg" class="msg center"></p>
+    <p class="center"><button class="link" data-action="import-cancel">Cancel</button></p>
+  </main>
+  <input type="file" id="bulk-file" accept="image/*" multiple hidden>`;
+}
+
+function draftCard(d: Draft): string {
+  const src = d.photos.find((p) => p.takenAt)?.source;
+  return `<section class="card draft ${d.include ? '' : 'excluded'}" data-key="${d.key}">
+    <label class="check"><input type="checkbox" data-draft="include" ${d.include ? 'checked' : ''}> Include this outage</label>
+    ${d.note ? `<p class="banner warn">${esc(d.note)}</p>` : ''}
+    <label>Went down at
+      <input type="datetime-local" data-draft="start" value="${d.start}" max="${toLocalInput(new Date())}"></label>
+    <p class="hint">${src ? esc(SOURCE_TEXT[src]) : '<strong>No time found in these photos.</strong> Please enter it.'}</p>
+    <label>Lasted <span class="muted">(optional)</span></label>
+    <div class="row dur">
+      <input type="number" data-draft="h" min="0" max="336" inputmode="numeric" placeholder="0" value="${esc(d.h)}" aria-label="Hours"> h
+      <input type="number" data-draft="m" min="0" max="59" inputmode="numeric" placeholder="0" value="${esc(d.m)}" aria-label="Minutes"> min
+    </div>
+    <ul class="thumbs">${d.photos.map((p) => `<li><img src="${p.url}" alt="">
+      <select data-photo="${p.id}" aria-label="What this photo shows">${PHOTO_KINDS.map((k) =>
+        `<option value="${k.kind}" ${k.kind === p.kind ? 'selected' : ''}>${esc(k.label.replace(' screenshot', ''))}</option>`).join('')}</select>
+      ${p.takenAt ? `<small>${fmtTime(p.takenAt)}</small>` : ''}</li>`).join('')}</ul>
+    ${d.dropped ? `<p class="hint">Only ${MAX_PHOTOS} photos fit in one report; ${d.dropped} more were left out.</p>` : ''}
+    <p class="center"><button class="link danger" data-action="import-remove" data-key="${d.key}">Remove</button></p>
+  </section>`;
+}
+
+/** Copy what the resident typed into the drafts before anything redraws the screen. */
+function syncDrafts() {
+  for (const card of document.querySelectorAll<HTMLElement>('.draft')) {
+    const d = drafts.find((x) => x.key === card.dataset.key);
+    if (!d) continue;
+    const v = (name: string) => card.querySelector<HTMLInputElement>(`[data-draft="${name}"]`);
+    d.include = v('include')!.checked;
+    d.start = v('start')!.value;
+    d.h = v('h')!.value;
+    d.m = v('m')!.value;
+  }
+}
+
+async function importFiles(files: File[]) {
+  importing = true;
+  if (route() !== 'import') location.hash = 'import'; else render();
+  const photos: DraftPhoto[] = [];
+  for (const file of files) {
+    try {
+      const meta = await readPhotoMeta(file);           // before compressing: that strips the time
+      const blob = await compressPhoto(file);
+      photos.push({ id: crypto.randomUUID(), blob, url: URL.createObjectURL(blob), takenAt: meta.takenAt, source: meta.source,
+        kind: meta.screenshot ? 'isp_app' : 'router_light' });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not read one of the photos.');
+    }
+  }
+  addToDrafts(photos);
+  importing = false;
+  render();
+}
+
+/** Group photos into outages: sorted by time, a gap of more than 45 minutes starts a new outage. */
+function addToDrafts(photos: DraftPhoto[]) {
+  const timed = photos.filter((p) => p.takenAt).sort((a, b) => a.takenAt!.getTime() - b.takenAt!.getTime());
+  const groups: DraftPhoto[][] = [];
+  for (const p of timed) {
+    const last = groups.at(-1);
+    if (last && p.takenAt!.getTime() - last.at(-1)!.takenAt!.getTime() <= GROUP_GAP_MS) last.push(p);
+    else groups.push([p]);
+  }
+  for (const p of photos.filter((x) => !x.takenAt)) groups.push([p]); // no time: one card each, time entered by hand
+
+  for (const g of groups) {
+    const start = g[0].takenAt;
+    // Joins an outage already in the list if it's within 45 minutes of it.
+    const existing = start && drafts.find((d) => {
+      const t = fromLocalInput(d.start);
+      return t && Math.abs(t.getTime() - start.getTime()) <= GROUP_GAP_MS;
+    });
+    if (existing) {
+      const room = MAX_PHOTOS - existing.photos.length;
+      existing.photos.push(...g.slice(0, Math.max(0, room)));
+      existing.dropped += Math.max(0, g.length - Math.max(0, room));
+      continue;
+    }
+    const already = start && listReports().find((r) => !r.withdrawn && Math.abs(new Date(r.startedAt).getTime() - start.getTime()) <= GROUP_GAP_MS);
+    drafts.push({
+      key: crypto.randomUUID(), include: !already, start: start ? toLocalInput(start) : '', h: '', m: '',
+      photos: g.slice(0, MAX_PHOTOS), dropped: Math.max(0, g.length - MAX_PHOTOS),
+      note: already ? `You already reported an outage at ${fmtWhen(already.startedAt)}. Left unchecked so it isn't counted twice.` : null,
+    });
+  }
+  drafts.sort((a, b) => (a.start && b.start ? a.start.localeCompare(b.start) : a.start ? -1 : 1));
+}
+
+function saveDrafts() {
+  syncDrafts();
+  const msg = document.getElementById('import-msg')!;
+  const chosen = drafts.filter((d) => d.include);
+  const reports: { r: LocalReport; d: Draft }[] = [];
+  for (const [i, d] of chosen.entries()) {
+    const label = `Outage ${i + 1}`;
+    const start = fromLocalInput(d.start);
+    if (!start || isNaN(start.getTime())) { msg.textContent = `${label}: please enter when it went down.`; return; }
+    if (start.getTime() > Date.now() + 60_000) { msg.textContent = `${label}: the time is in the future.`; return; }
+    if (Date.now() - start.getTime() > MAX_AGE_DAYS * 86_400_000) { msg.textContent = `${label}: only outages from the last year can be reported.`; return; }
+    const durMs = (Number(d.h || 0) * 60 + Number(d.m || 0)) * 60_000;
+    const end = durMs > 0 ? new Date(start.getTime() + durMs) : null;
+    if (end && end.getTime() > Date.now() + 60_000) { msg.textContent = `${label}: it would end in the future.`; return; }
+    reports.push({ d, r: { id: crypto.randomUUID(), home: profile.home!, startedAt: start.toISOString(), endedAt: end?.toISOString() ?? null,
+      notes: null, withdrawn: false, photos: d.photos.map((p) => ({ id: p.id, kind: p.kind })), endUnknown: !end } });
+  }
+  for (const { r, d } of reports) {
+    persist(r);
+    for (const p of d.photos) { thumbs.set(p.id, p.url); void queuePhoto(r.id, p.id, p.kind, p.blob); }
+  }
+  drafts = [];
+  toast(`Saved ${reports.length} outage${reports.length === 1 ? '' : 's'}. Thank you!`);
+  goHome();
 }
 
 function summaryView(): string {
@@ -301,7 +456,7 @@ const actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
     if (!t || isNaN(t.getTime())) { msg.textContent = 'Please pick a date and time.'; return; }
     if (t.getTime() > Date.now() + 60_000) { msg.textContent = "That's in the future."; return; }
     if (editing === 'start') {
-      if (Date.now() - t.getTime() > 31 * 86_400_000) { msg.textContent = 'That is more than a month ago.'; return; }
+      if (Date.now() - t.getTime() > MAX_AGE_DAYS * 86_400_000) { msg.textContent = 'That is more than a year ago.'; return; }
       r.startedAt = t.toISOString();
     } else {
       if (t < new Date(r.startedAt)) { msg.textContent = 'It has to be after the outage started.'; return; }
@@ -329,7 +484,7 @@ const actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
     const notes = (document.getElementById('p-notes') as HTMLTextAreaElement).value.trim() || null;
     if (!start || isNaN(start.getTime())) { msg.textContent = 'Please enter when it went down.'; return; }
     if (start.getTime() > Date.now() + 60_000) { msg.textContent = 'The start time is in the future.'; return; }
-    if (Date.now() - start.getTime() > 31 * 86_400_000) { msg.textContent = 'Only outages from the last month can be reported.'; return; }
+    if (Date.now() - start.getTime() > MAX_AGE_DAYS * 86_400_000) { msg.textContent = 'Only outages from the last year can be reported.'; return; }
     if (still && openReport()) { msg.textContent = 'You already have an open outage. Mark it as back first.'; return; }
     const durMs = (h * 60 + m) * 60_000;
     let end: Date | null = null;
@@ -338,7 +493,7 @@ const actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
       if (end.getTime() > Date.now() + 60_000) { msg.textContent = 'That would end in the future. Did you mean “It\'s still down”?'; return; }
     }
     const r: LocalReport = { id: crypto.randomUUID(), home: profile.home!, startedAt: start.toISOString(),
-      endedAt: end?.toISOString() ?? null, notes, withdrawn: false, photos: pastPhotos.map((p) => ({ id: p.id, kind: p.kind })) };
+      endedAt: end?.toISOString() ?? null, notes, withdrawn: false, photos: pastPhotos.map((p) => ({ id: p.id, kind: p.kind })), endUnknown: !still && !end };
     persist(r);
     for (const p of pastPhotos) { thumbs.set(p.id, p.url); void queuePhoto(r.id, p.id, p.kind, p.blob); }
     pastPhotos = [];
@@ -380,6 +535,23 @@ const actions: Record<string, (el: HTMLElement) => void | Promise<void>> = {
     codeFixed();
     goHome();
   },
+  'import-pick'() {
+    if (route() === 'import') syncDrafts();
+    (document.getElementById('bulk-file') as HTMLInputElement).click();
+  },
+  'import-remove'(el) {
+    syncDrafts();
+    const d = drafts.find((x) => x.key === el.dataset.key);
+    d?.photos.forEach((p) => URL.revokeObjectURL(p.url));
+    drafts = drafts.filter((x) => x !== d);
+    render();
+  },
+  'import-save'() { saveDrafts(); },
+  'import-cancel'() {
+    drafts.forEach((d) => d.photos.forEach((p) => URL.revokeObjectURL(p.url)));
+    drafts = [];
+    goHome();
+  },
   'dismiss-problems'() { clearProblems(); },
   'dismiss-install'() { localStorage.setItem('entrada.installDismissed', '1'); render(); },
   async install() { await installPrompt?.prompt(); installPrompt = null; render(); },
@@ -402,6 +574,18 @@ document.addEventListener('click', (ev) => {
 
 document.addEventListener('change', async (ev) => {
   const input = ev.target as HTMLInputElement;
+  // Photo import screen
+  if (input.id === 'bulk-file' && input.files?.length) {
+    const files = [...input.files];
+    input.value = '';
+    await importFiles(files);
+    return;
+  }
+  if (input.dataset.photo) {
+    for (const d of drafts) for (const p of d.photos) if (p.id === input.dataset.photo) p.kind = input.value as PhotoKind;
+    return;
+  }
+  if (input.dataset.draft === 'include') { syncDrafts(); render(); return; }
   if (input.id !== 'file' || !input.files?.length) return;
   const files = [...input.files];
   input.value = '';

@@ -78,7 +78,7 @@ function draw() {
         const m = minutes(r);
         return `<tr class="${r.withdrawn ? 'withdrawn' : ''}">
           <td>${fmtDay(r.startedAt)}<br>${fmtTime(r.startedAt)}</td>
-          <td>${r.endedAt ? fmtTime(r.endedAt) : '<span class="tag down">open</span>'}</td>
+          <td>${r.endedAt ? fmtTime(r.endedAt) : Date.now() - +new Date(r.startedAt) < 12 * 3_600_000 ? '<span class="tag down">open</span>' : '<span class="muted">not given</span>'}</td>
           <td>${m === null ? '' : fmtDuration(m * 60_000)}</td>
           <td>${esc(r.addressText)}${r.isListedAddress ? '' : ' <span class="tag" title="Typed in, not from the list">typed</span>'}${r.withdrawn ? ' <span class="tag">removed</span>' : ''}</td>
           <td>${esc(r.notes ?? '')}</td>

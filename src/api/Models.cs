@@ -32,9 +32,10 @@ public static class PhotoKinds
 
 public static class Limits
 {
-    public const int MaxNewReportsPerDevicePerDay = 20;
+    /// <summary>High enough to backfill weeks of outages from photos in one sitting.</summary>
+    public const int MaxNewReportsPerDevicePerDay = 100;
     public const int MaxPhotosPerReport = 6;
-    public static readonly TimeSpan MaxReportAge = TimeSpan.FromDays(31);
+    public static readonly TimeSpan MaxReportAge = TimeSpan.FromDays(365);
     public static readonly TimeSpan MaxOutageLength = TimeSpan.FromDays(14);
     /// <summary>Allowance for phones whose clocks run a little fast.</summary>
     public static readonly TimeSpan ClockSkew = TimeSpan.FromMinutes(10);

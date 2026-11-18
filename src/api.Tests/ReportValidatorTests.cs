@@ -46,7 +46,8 @@ public class ReportValidatorTests
     public void Times_must_be_sensible()
     {
         Assert.NotEmpty(_v.Validate(Input(start: Now.AddHours(1))).Errors);                         // future start
-        Assert.NotEmpty(_v.Validate(Input(start: Now.AddDays(-40))).Errors);                        // too old
+        Assert.NotEmpty(_v.Validate(Input(start: Now.AddDays(-400))).Errors);                       // older than a year
+        Assert.Empty(_v.Validate(Input(start: Now.AddDays(-200))).Errors);                          // backfill ok
         Assert.NotEmpty(_v.Validate(Input(start: Now.AddHours(-1), end: Now.AddHours(-2))).Errors); // ends before start
         Assert.NotEmpty(_v.Validate(Input(start: Now.AddDays(-20), end: Now)).Errors);              // > 14 days
         Assert.Empty(_v.Validate(Input(start: Now.AddMinutes(5))).Errors);                          // small clock skew ok
