@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "dotnet-isolated",
+    "NEIGHBORHOOD_CODE": "change-me",
+    "SQL_CONNECTION_STRING": "Server=tcp:<server>.database.windows.net,1433;Database=outages;User ID=<user>;Password=<password>;Encrypt=True;Connect Timeout=30;",
+    "STORAGE_CONNECTION_STRING": "DefaultEndpointsProtocol=https;AccountName=<account>;AccountKey=<key>;EndpointSuffix=core.windows.net"
+  }
+}

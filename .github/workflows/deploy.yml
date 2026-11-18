@@ -1,0 +1,59 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]      # build + test only; pull requests never deploy
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Address list is up to date
+        run: |
+          node scripts/build-addresses.mjs
+          git diff --exit-code src/data/addresses.json || {
+            echo "::error::src/data/addresses.json is out of date. Run 'node scripts/build-addresses.mjs' and commit."; exit 1; }
+
+      - name: API tests
+        run: dotnet test src/api.Tests --nologo
+
+      - name: Build web app
+        working-directory: src/web
+        run: npm ci && npm run build
+
+      - name: Build API
+        run: dotnet publish src/api -c Release -o build/api --nologo
+
+      - name: Deploy to Azure Static Web Apps
+        if: github.event_name != 'pull_request'
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          action: upload
+          app_location: src/web/dist
+          api_location: build/api
+          output_location: ""
+          skip_app_build: true
+          skip_api_build: true
