@@ -18,6 +18,8 @@ echo "== Subscription: $(az account show --query name -o tsv) ($SUBSCRIPTION)"
 
 : "${NEIGHBORHOOD_CODE:?Set NEIGHBORHOOD_CODE, e.g. NEIGHBORHOOD_CODE=\"Entrada 2026\" ./infra/provision.sh}"
 LOCATION="${LOCATION:-eastus2}"          # Static Web Apps regions: westus2, centralus, eastus2, westeurope, eastasia
+# SQL regions to try in order. Some regions refuse new SQL servers on credit-based subscriptions.
+SQL_LOCATIONS="${SQL_LOCATIONS:-eastus2 eastus centralus southcentralus westus2 northcentralus}"
 RG="${RG:-rg-entrada-outages}"
 SUFFIX="${SUFFIX:-$(openssl rand -hex 3)}"
 SWA="${SWA:-entrada-outages}"
@@ -27,15 +29,34 @@ SQL_ADMIN="outageadmin"
 SQL_PASSWORD="$(openssl rand -base64 33 | tr -dc 'A-Za-z0-9' | cut -c1-28)Aa1!"
 STORAGE="entradaphotos$SUFFIX"
 
+echo "== Enabling Azure services on the subscription (one-time, free)"
+for ns in Microsoft.Web Microsoft.Sql Microsoft.Storage; do
+  az provider register --namespace "$ns" --wait -o none
+done
+
 echo "== Resource group $RG ($LOCATION)"
 az group create -n "$RG" -l "$LOCATION" -o none
 
 echo "== Static Web App $SWA (Free)"
-az staticwebapp create -n "$SWA" -g "$RG" -l "$LOCATION" --sku Free -o none
+if az staticwebapp show -n "$SWA" -g "$RG" -o none 2>/dev/null; then
+  echo "   already exists"
+else
+  az staticwebapp create -n "$SWA" -g "$RG" -l "$LOCATION" --sku Free -o none
+fi
 HOST="$(az staticwebapp show -n "$SWA" -g "$RG" --query defaultHostname -o tsv)"
 
-echo "== SQL server $SQL_SERVER + free-offer database"
-az sql server create -g "$RG" -n "$SQL_SERVER" -l "$LOCATION" -u "$SQL_ADMIN" -p "$SQL_PASSWORD" -o none
+echo "== SQL server + free-offer database"
+SQL_LOCATION=""
+for loc in $SQL_LOCATIONS; do
+  # A refused attempt reserves its name for a while, so each region gets its own name.
+  SQL_SERVER="entrada-outages-$SUFFIX-$loc"
+  if az sql server create -g "$RG" -n "$SQL_SERVER" -l "$loc" -u "$SQL_ADMIN" -p "$SQL_PASSWORD" -o none 2>/tmp/sqlerr.txt; then
+    SQL_LOCATION="$loc"; echo "   created $SQL_SERVER in $loc"; break
+  fi
+  grep -q RegionDoesNotAllowProvisioning /tmp/sqlerr.txt || { cat /tmp/sqlerr.txt >&2; exit 1; }
+  echo "   $loc is not accepting new SQL servers; trying the next region"
+done
+[ -n "$SQL_LOCATION" ] || { echo "ERROR: no region accepted a new SQL server: $SQL_LOCATIONS" >&2; exit 1; }
 # The API runs on Microsoft-managed infrastructure with no fixed IPs, so allow Azure services.
 az sql server firewall-rule create -g "$RG" -s "$SQL_SERVER" -n AllowAzureServices \
   --start-ip-address 0.0.0.0 --end-ip-address 0.0.0.0 -o none
