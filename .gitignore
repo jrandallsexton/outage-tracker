@@ -9,3 +9,6 @@ local.settings.json
 *.user
 .vs/
 .vscode/
+
+# Private notes (e.g. posts that contain the neighborhood code). Never commit.
+private/
